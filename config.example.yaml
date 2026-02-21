@@ -1,0 +1,17 @@
+# Config example - copy to config.yaml and fill in your keys
+
+polymarket:
+  api_key: "YOUR_POLYMARKET_API_KEY"
+  private_key: "YOUR_PRIVATE_KEY"
+
+# Threshold for arbitrage (spread < threshold = arbitrage)
+spread_threshold: 0.95
+
+# Weather API (NOAA is free)
+weather:
+  use_noaa: true
+
+# Trading config
+trading:
+  min_trade: 10  # USD
+  max_trade: 100  # USD
