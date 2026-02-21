@@ -1,17 +1,49 @@
 # Config example - copy to config.yaml and fill in your keys
 
+# =======================
+# Polymarket API
+# =======================
 polymarket:
   api_key: "YOUR_POLYMARKET_API_KEY"
   private_key: "YOUR_PRIVATE_KEY"
 
-# Threshold for arbitrage (spread < threshold = arbitrage)
+# =======================
+# Trading Config
+# =======================
+trading:
+  mode: "paper"  # paper or live
+  bankroll: 500  # USD for testing
+  
+  # Kelly Criterion
+  kelly_fraction: 0.25  # Usar 25% del Kelly sugerido
+  
+  # Position sizing
+  min_bet: 10  # USD mínimo
+  max_bet: 100  # USD máximo
+  max_position_pct: 0.10  # Máximo 10% del bankroll por trade
+
+# =======================
+# Strategy Thresholds
+# =======================
+# Spread arbitrage (cuando YES + NO < threshold = arbitraje seguro)
 spread_threshold: 0.95
 
-# Weather API (NOAA is free)
-weather:
-  use_noaa: true
+# Prediction edge (diferencia mínima entre NOAA vs mercado)
+prediction_threshold: 0.08
 
-# Trading config
-trading:
-  min_trade: 10  # USD
-  max_trade: 100  # USD
+# Confianza mínima para operar
+min_confidence: 0.55
+
+# =======================
+# Markets to Monitor
+# =======================
+# Lista de ciudades a monitorear (vacío = todas)
+cities: []
+
+# =======================
+# Logging
+# =======================
+logging:
+  level: "INFO"
+  save_trades: true
+  alert_on_edge: true  # Alertas cuando se detecta opportunity
