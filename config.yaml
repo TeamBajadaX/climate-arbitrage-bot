@@ -5,7 +5,7 @@ polymarket:
 
 trading:
   mode: "paper"
-  bankroll: 300  # USD para paper trading
+  bankroll: 300
   
   kelly_fraction: 0.25
   min_bet: 5
@@ -13,9 +13,9 @@ trading:
   max_position_pct: 0.15
 
 spread_threshold: 0.95
-prediction_threshold: 0.08
-min_confidence: 0.55
-min_edge: 0.05
+prediction_threshold: 0.15  # Subido de 0.08 a 0.15
+min_confidence: 1.5  # Subido de 0.55 a 1.5
+min_edge: 0.10  # Subido de 0.05 a 0.10
 
 stop_loss_pct: 0.10
 profit_take_pct: 0.30

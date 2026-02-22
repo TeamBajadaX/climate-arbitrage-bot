@@ -4,25 +4,27 @@ Prediction Edge - Comparar NOAA forecasts vs Polymarket prices
 import logging
 from datetime import datetime
 
-from weather import NOAAClient, get_coords_for_city, get_historical_precip_probability
+from weather import HistoricalWeatherClient, OpenMeteoClient, get_coords_for_city, get_historical_precip_probability, get_historical_temp
 
 logger = logging.getLogger(__name__)
 
 
 class PredictionEngine:
     """
-    Compara forecasts de NOAA vs precios de Polymarket
+    Compara forecasts vs precios de Polymarket
     para encontrar edges en la predicción
+    Usa Open-Meteo para forecast real
     """
     
     def __init__(self, threshold: float = 0.08, use_cache: bool = True):
         """
         Args:
             threshold: Diferencia mínima para considerar edge (default 8%)
-            use_cache: Usar cache para evitar múltiples llamadas a NOAA
+            use_cache: Usar cache para evitar múltiples llamadas
         """
         self.threshold = threshold
-        self.noaa = NOAAClient()
+        self.openmeteo = OpenMeteoClient()  # Usar Open-Meteo para forecast real
+        self.historical = HistoricalWeatherClient()  # Fallback
         self.cache = {}  # Cache forecasts
         self.use_cache = use_cache
     
@@ -84,9 +86,11 @@ class PredictionEngine:
         elif any(x in question_lower for x in ["hit", "reach", "be at"]):
             result["operator"] = "="
         
-        # Units
+        # Units - check both °C and °F (Polymarket puede usar ambos)
         if "°f" in question_lower or "fahrenheit" in question_lower:
             result["unit"] = "fahrenheit"
+        elif "°c" in question_lower or "celsius" in question_lower:
+            result["unit"] = "celsius"
         
         # Extract threshold value
         import re
@@ -105,7 +109,7 @@ class PredictionEngine:
     
     def get_noaa_prediction(self, parsed: dict) -> dict:
         """
-        Obtener predicción de NOAA basada en la pregunta parseada
+        Obtener predicción basada en Open-Meteo (forecast real)
         
         Args:
             parsed: Dict del parse_market_question
@@ -126,7 +130,11 @@ class PredictionEngine:
         # Get coordinates
         coords = get_coords_for_city(city)
         if not coords:
-            return {"probability": None, "error": f"No coordinates for city: {city}"}
+            # Fallback to historical if no coords
+            prob_result = self.historical.get_temperature_probability(
+                city, threshold, operator, date
+            )
+            return prob_result
         
         lat, lon = coords
         
@@ -138,19 +146,22 @@ class PredictionEngine:
             logger.debug(f"Using cached prediction for {cache_key}")
             return self.cache[cache_key]
         
-        result = {"source": "NOAA", "city": city}
+        result = {"source": "Open-Meteo", "city": city}
         
         if variable == "temperature" and threshold:
-            # Temperature prediction
-            # Convert threshold to Celsius if needed
-            if unit == "fahrenheit":
-                threshold_c = (threshold - 32) * 5/9
-            else:
-                threshold_c = threshold
+            # Temperature prediction using Open-Meteo forecast
+            # El threshold puede venir en Celsius o Fahrenheit según el market
             
-            # Get probability from NOAA
-            prob_result = self.noaa.get_temperature_probability(
-                lat, lon, threshold_c, operator, date
+            # Convertir threshold a Fahrenheit para pasarlo al cliente de weather
+            # (el cliente espera Fahrenheit)
+            if unit == "celsius":
+                threshold_f = (threshold * 9/5) + 32
+            else:
+                threshold_f = threshold
+            
+            # Get probability using Open-Meteo
+            prob_result = self.openmeteo.get_temperature_probability(
+                lat, lon, threshold_f, operator, date
             )
             
             result.update(prob_result)

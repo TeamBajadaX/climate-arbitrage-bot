@@ -15,8 +15,8 @@ import json
 from pathlib import Path
 from datetime import datetime
 
-from polymarket import PolymarketClient, get_weather_markets, calculate_spread, is_arbitrage_opportunity
-from weather import NOAAClient, get_coords_for_city
+from polymarket import PolymarketClient, get_weather_markets, calculate_spread, is_arbitrage_opportunity, get_temperature_events, get_markets_from_events
+from weather import HistoricalWeatherClient, get_coords_for_city
 from arbitrage import estimate_profit
 from prediction import PredictionEngine
 from kelly import capped_kelly, position_size
@@ -36,9 +36,40 @@ def load_config(config_path: str) -> dict:
 
 
 def get_all_weather_markets(pm_client: PolymarketClient) -> list:
-    """Get ALL weather markets from Polymarket"""
-    logger.info("Fetching ALL markets from Polymarket...")
+    """Get weather markets from Polymarket using temperature events API - FUTURE ONLY"""
+    import httpx
+    from datetime import datetime
     
+    logger.info("Fetching temperature events from Polymarket...")
+    
+    # Use the new temperature events API
+    client = httpx.Client()
+    events = get_temperature_events(client, limit=100)
+    
+    if events:
+        markets = get_markets_from_events(events)
+        
+        # Filter to only future markets
+        now = datetime.now()
+        future_markets = []
+        
+        for m in markets:
+            end_date = m.get('endDate')
+            if end_date:
+                try:
+                    # Parse endDate - format: "2026-02-22T12:00:00Z"
+                    end = datetime.fromisoformat(end_date.replace('Z', '+00:00').replace('+00:00', ''))
+                    if end > now:
+                        future_markets.append(m)
+                except Exception as e:
+                    # If we can't parse, include it
+                    future_markets.append(m)
+        
+        logger.info(f"Found {len(markets)} total markets, {len(future_markets)} future markets")
+        return future_markets
+    
+    # Fallback to old method
+    logger.info("Fallback: fetching all markets...")
     all_markets = []
     cursor = None
     
@@ -316,6 +347,13 @@ def run_scan(pm_client: PolymarketClient, config: dict, trade_manager: TradeMana
     return results
 
 
+def json_serial(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+
 def save_logs(scan_results: dict, trade_manager: TradeManager):
     """Guardar logs de la sesión"""
     log_dir = Path("logs")
@@ -332,13 +370,13 @@ def save_logs(scan_results: dict, trade_manager: TradeManager):
     }
     
     with open(scan_file, 'a') as f:
-        f.write(json.dumps(summary) + "\n")
+        f.write(json.dumps(summary, default=json_serial) + "\n")
     
     # Full trade manager state
     state_file = log_dir / f"positions_{datetime.now().strftime('%Y%m%d')}.json"
     state = trade_manager.get_position_summary()
     with open(state_file, 'w') as f:
-        json.dump(state, f, indent=2)
+        json.dump(state, f, indent=2, default=json_serial)
 
 
 def main():

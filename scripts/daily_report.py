@@ -10,6 +10,14 @@ from datetime import datetime
 
 def generate_daily_report(log_dir: Path, date: str = None) -> dict:
     """Generar reporte diario"""
+    import json
+    
+    class DateTimeEncoder(json.JSONEncoder):
+        def default(self, obj):
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            return super().default(obj)
+    
     if date is None:
         date = datetime.now().strftime("%Y-%m-%d")
     

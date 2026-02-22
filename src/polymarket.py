@@ -12,7 +12,7 @@ class PolymarketClient:
         self.client = httpx.Client()
     
     def get_markets(self, cursor: str = None, limit: int = 100):
-        """Get all markets"""
+        """Get all markets - handles both old and new API formats"""
         endpoint = f"{self.BASE_URL}/markets"
         params = {"limit": limit}
         if cursor:
@@ -23,7 +23,15 @@ class PolymarketClient:
             headers["Authorization"] = f"Bearer {self.api_key}"
         
         resp = self.client.get(endpoint, headers=headers, params=params)
-        return resp.json()
+        data = resp.json()
+        
+        # Handle both old format (markets) and new format (data)
+        if "data" in data:
+            return {
+                "markets": data["data"],
+                "nextCursor": data.get("next_cursor")
+            }
+        return data
     
     def get_order_book(self, condition_id: str):
         """Get order book for a market"""
@@ -73,6 +81,53 @@ def get_weather_markets(markets: list) -> list:
             weather_markets.append(market)
     
     return weather_markets
+
+
+def get_temperature_events(client, limit: int = 100) -> list:
+    """
+    Get temperature-related events from Polymarket API
+    Uses tag_id 103040 for Daily Temperature
+    """
+    # First get all temperature events
+    events = []
+    cursor = None
+    
+    while len(events) < limit:
+        params = {
+            "tag_id": "103040",  # Daily Temperature tag
+            "active": "true",
+            "closed": "false",
+            "limit": min(100, limit - len(events))
+        }
+        if cursor:
+            params["cursor"] = cursor
+            
+        resp = client.get("https://gamma-api.polymarket.com/events", params=params)
+        if resp.status_code != 200:
+            break
+            
+        page = resp.json()
+        if not page:
+            break
+            
+        events.extend(page)
+        cursor = page[-1].get("slug") if page else None
+        if not cursor:
+            break
+    
+    return events
+
+
+def get_markets_from_events(events: list) -> list:
+    """Extract all markets from events"""
+    markets = []
+    for event in events:
+        event_markets = event.get("markets", [])
+        for m in event_markets:
+            m["event_title"] = event.get("title", "")
+            m["event_slug"] = event.get("slug", "")
+            markets.append(m)
+    return markets
 
 
 def calculate_spread(yes_price: float, no_price: float) -> float:

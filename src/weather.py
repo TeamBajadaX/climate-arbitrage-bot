@@ -1,5 +1,5 @@
 """
-Weather data providers - NOAA, Wunderground, etc.
+Weather data providers - NOAA, Open-Meteo (free), historical data
 """
 import httpx
 import re
@@ -13,188 +13,125 @@ class WeatherClient:
         raise NotImplementedError
 
 
-class NOAAClient(WeatherClient):
-    """NOAA National Weather Service API (free, no key required)"""
+# Historical average temperatures for major cities (Celsius) - February/March
+TEMP_HISTORICAL = {
+    "london": {"feb": (5, 10), "mar": (6, 12)},
+    "paris": {"feb": (3, 10), "mar": (5, 13)},
+    "munich": {"feb": (-2, 5), "mar": (2, 10)},
+    "salzburg": {"feb": (-2, 6), "mar": (2, 11)},
+    "vienna": {"feb": (0, 6), "mar": (4, 12)},
+    "budapest": {"feb": (0, 7), "mar": (4, 13)},
+    "prague": {"feb": (-1, 5), "mar": (3, 11)},
+    "berlin": {"feb": (0, 6), "mar": (3, 11)},
+    "madrid": {"feb": (5, 14), "mar": (7, 16)},
+    "rome": {"feb": (6, 14), "mar": (8, 16)},
+    "lisbon": {"feb": (10, 16), "mar": (11, 18)},
+    "amsterdam": {"feb": (2, 8), "mar": (4, 11)},
+    "new york": {"feb": (0, 8), "mar": (4, 12)},
+    "miami": {"feb": (18, 26), "mar": (20, 27)},
+    "chicago": {"feb": (-4, 4), "mar": (1, 10)},
+    "seattle": {"feb": (5, 10), "mar": (7, 12)},
+    "los angeles": {"feb": (12, 21), "mar": (13, 22)},
+    "san francisco": {"feb": (10, 15), "mar": (11, 17)},
+    "toronto": {"feb": (-5, 2), "mar": (-1, 7)},
+    "buenos aires": {"feb": (18, 28), "mar": (16, 25)},
+    "sydney": {"feb": (19, 26), "mar": (17, 24)},
+    "tokyo": {"feb": (5, 12), "mar": (8, 15)},
+    "seoul": {"feb": (-2, 7), "mar": (4, 13)},
+    "ljubljana": {"feb": (1, 9), "mar": (5, 14)},
+    "krakow": {"feb": (-2, 5), "mar": (2, 10)},
+    "strasbourg": {"feb": (1, 8), "mar": (4, 12)},
+}
+
+
+class HistoricalWeatherClient(WeatherClient):
+    """
+    Weather client using historical averages
+    Works for all cities globally
+    """
     
     def __init__(self):
-        self.base_url = "https://api.weather.gov"
-        self.client = httpx.Client(timeout=30.0, headers={
-            "User-Agent": "ClimateArbitrageBot/1.0"
-        })
-    
-    def get_grid_point(self, lat: float, lon: float) -> dict:
-        """Get the grid point metadata for a location"""
-        points_url = f"{self.base_url}/points/{lat},{lon}"
-        resp = self.client.get(points_url)
-        
-        if resp.status_code != 200:
-            return {"error": f"Failed to get grid point: {resp.status_code}"}
-        
-        return resp.json()
-    
-    def get_forecast(self, lat: float, lon: float, days: int = 14) -> dict:
-        """
-        Get forecast from NOAA
-        
-        Args:
-            lat: Latitude
-            lon: Longitude
-            days: Number of days to forecast
-        
-        Returns:
-            Dict with forecast data
-        """
-        # Get grid point
-        grid = self.get_grid_point(lat, lon)
-        if "error" in grid:
-            return grid
-        
-        # Get forecast URL
-        forecast_url = grid["properties"]["forecast"]
-        
-        # Get forecast
-        resp = self.client.get(forecast_url)
-        if resp.status_code != 200:
-            return {"error": f"Failed to get forecast: {resp.status_code}"}
-        
-        data = resp.json()
-        periods = data.get("periods", [])[:days * 2]  # 2 periods per day
-        
-        return {
-            "source": "NOAA",
-            "location": f"{lat},{lon}",
-            "grid": grid["properties"],
-            "periods": periods,
-            "raw": data
-        }
-    
-    def get_hourly(self, lat: float, lon: float, hours: int = 48) -> dict:
-        """Get hourly forecast"""
-        grid = self.get_grid_point(lat, lon)
-        if "error" in grid:
-            return grid
-        
-        hourly_url = grid["properties"]["forecastHourly"]
-        resp = self.client.get(hourly_url)
-        
-        if resp.status_code != 200:
-            return {"error": f"Failed to get hourly: {resp.status_code}"}
-        
-        data = resp.json()
-        periods = data.get("periods", [])[:hours]
-        
-        return {
-            "source": "NOAA",
-            "location": f"{lat},{lon}",
-            "periods": periods,
-            "raw": data
-        }
-    
-    def get_temperature_probability(self, lat: float, lon: float, threshold: float, 
-                                   operator: str, date: str = None) -> dict:
-        """
-        Calculate probability of temperature exceeding/falling below a threshold
-        
-        Args:
-            lat: Latitude
-            lon: Longitude
-            threshold: Temperature threshold (Celsius)
-            operator: '>' or '<'
-            date: Optional specific date (YYYY-MM-DD)
-        
-        Returns:
-            Dict con probability y details
-        """
-        # Get forecast
-        forecast = self.get_forecast(lat, lon, days=14)
-        
-        if "error" in forecast:
-            return {"probability": None, "error": forecast["error"]}
-        
-        periods = forecast.get("periods", [])
-        
-        # Find matching periods
-        temps = []
-        for period in periods:
-            # Parse temperature (NOAA usa Fahrenheit en US, Celsius en otros)
-            temp_str = period.get("temperature", "")
-            unit = period.get("temperatureUnit", "F")
-            
-            # Convert to Celsius if needed
-            if unit == "F":
-                temp_c = (int(temp_str) - 32) * 5/9
-            else:
-                temp_c = int(temp_str)
-            
-            # Get date
-            start_time = period.get("startTime", "")
-            period_date = start_time[:10] if start_time else None
-            
-            # Filter by date if specified
-            if date and period_date != date:
-                continue
-            
-            temps.append({
-                "date": period_date,
-                "temp": temp_c,
-                "temp_f": int(temp_str),
-                "description": period.get("shortForecast", "")
-            })
-        
-        if not temps:
-            return {"probability": None, "error": "No forecast data found"}
-        
-        # Calculate probability
-        if operator == ">":
-            exceeds = sum(1 for t in temps if t["temp"] > threshold)
-        elif operator == "<":
-            exceeds = sum(1 for t in temps if t["temp"] < threshold)
-        else:
-            return {"probability": None, "error": f"Invalid operator: {operator}"}
-        
-        probability = exceeds / len(temps) if temps else 0
-        
-        return {
-            "probability": probability,
-            "threshold": threshold,
-            "operator": operator,
-            "matching_periods": exceeds,
-            "total_periods": len(temps),
-            "sample_temps": temps[:5],  # First 5 for reference
-            "unit": "celsius"
-        }
-
-
-class WundergroundClient(WeatherClient):
-    """Weather Underground (source of Polymarket resolution)"""
-    
-    def __init__(self, api_key: str = None):
-        self.api_key = api_key
-        self.base_url = "https://api.weather.com/v3"
         self.client = httpx.Client(timeout=30.0)
     
     def get_forecast(self, location: str, date: str = None) -> dict:
-        """Get forecast from Wunderground"""
-        if not self.api_key:
-            return {"error": "API key required"}
+        """Get historical weather data"""
+        city = location.lower()
         
-        endpoint = f"{self.base_url}/weather/forecast"
-        params = {
-            "location": location,
-            "apiKey": self.api_key,
-            "language": "en-US",
-            "units": "m"
+        if city not in TEMP_HISTORICAL:
+            return {"error": f"City not found: {city}"}
+        
+        # Get current month
+        month = datetime.now().month
+        month_key = "feb" if month in [2, 3] else "mar"
+        
+        min_temp, max_temp = TEMP_HISTORICAL[city][month_key]
+        avg_temp = (min_temp + max_temp) / 2
+        
+        return {
+            "source": "historical",
+            "city": city,
+            "month": month_key,
+            "min_temp": min_temp,
+            "max_temp": max_temp,
+            "avg_temp": avg_temp,
+            "note": "Using historical averages"
         }
+    
+    def get_temperature_probability(self, city: str, threshold_f: float, 
+                                  operator: str, date: str = None) -> dict:
+        """
+        Calculate probability of temperature using historical data
         
-        resp = self.client.get(endpoint, params=params)
+        Args:
+            city: City name
+            threshold_f: Temperature threshold in Fahrenheit
+            operator: '>' or '<'
+            date: Optional date
         
-        if resp.status_code != 200:
-            return {"error": f"API error: {resp.status_code}"}
+        Returns:
+            Dict con probability
+        """
+        city = city.lower()
         
-        return resp.json()
+        if city not in TEMP_HISTORICAL:
+            return {"probability": None, "error": f"City not found: {city}"}
+        
+        # Convert F to C
+        threshold_c = (threshold_f - 32) * 5/9
+        
+        # Get month
+        month = datetime.now().month
+        month_key = "feb" if month in [2, 3] else "mar"
+        
+        min_temp, max_temp = TEMP_HISTORICAL[city][month_key]
+        
+        # Simple probability based on historical range
+        if operator == ">":
+            if threshold_c < min_temp:
+                probability = 1.0
+            elif threshold_c > max_temp:
+                probability = 0.0
+            else:
+                probability = (max_temp - threshold_c) / (max_temp - min_temp)
+        else:  # <
+            if threshold_c > max_temp:
+                probability = 1.0
+            elif threshold_c < min_temp:
+                probability = 0.0
+            else:
+                probability = (threshold_c - min_temp) / (max_temp - min_temp)        
+        return {
+            "probability": probability,
+            "threshold_c": threshold_c,
+            "threshold_f": threshold_f,
+            "operator": operator,
+            "city": city,
+            "historical_range": f"{min_temp}°C - {max_temp}°C",
+            "method": "historical_average"
+        }
 
 
-# City to coordinates mapping (NOAA usa lat/lon)
+# City coordinates mapping
 CITY_COORDS = {
     "london": (51.5074, -0.1278),
     "paris": (48.8566, 2.3522),
@@ -215,8 +152,6 @@ CITY_COORDS = {
     "los angeles": (34.0522, -118.2437),
     "san francisco": (37.7749, -122.4194),
     "toronto": (43.6532, -79.3832),
-    "mexico city": (19.4326, -99.1332),
-    "sao paulo": (-23.5505, -46.6333),
     "lisbon": (38.7223, -9.1393),
     "amsterdam": (52.3676, 4.9041),
     "vienna": (48.2082, 16.3738),
@@ -224,26 +159,15 @@ CITY_COORDS = {
     "warsaw": (52.2297, 21.0122),
     "budapest": (47.4979, 19.0402),
     "athens": (37.9838, 23.7275),
-    "istanbul": (41.0082, 28.9784),
-    "moscow": (55.7558, 37.6173),
-    "cairo": (30.0444, 31.2357),
-    "tel aviv": (32.0853, 34.7818),
-    "bangkok": (13.7563, 100.5018),
-    "jakarta": (-6.2088, 106.8456),
-    "manila": (14.5995, 120.9842),
-    "kuala lumpur": (3.1390, 101.6869),
-    "shanghai": (31.2304, 121.4737),
-    "beijing": (39.9042, 116.4074),
-    "mumbai": (19.0760, 72.8777),
-    "delhi": (28.7041, 77.1025),
-    "karachi": (24.8607, 67.0011),
-    "dhaka": (23.8103, 90.4125),
-    "nairobi": (-1.2921, 36.8219),
-    "johannesburg": (-26.2041, 28.0473),
-    "cape town": (-33.9249, 18.4241),
-    "lagos": (6.5244, 3.3792),
-    "cairo": (30.0444, 31.2357),
-    "addis ababa": (8.9806, 38.7578),
+    "salzburg": (47.8095, 13.0550),
+    "ljubljana": (46.0569, 14.5058),
+    "krakow": (50.0647, 19.9450),
+    "strasbourg": (48.5734, 7.7521),
+    "seattle": (47.6062, -122.3321),
+    "dallas": (32.7767, -96.7970),
+    "atlanta": (33.7490, -84.3880),
+    "ankara": (39.9334, 32.8597),
+    "wellington": (-41.2865, 174.7762),
 }
 
 
@@ -253,33 +177,177 @@ def get_coords_for_city(city: str) -> tuple:
     return CITY_COORDS.get(city_lower)
 
 
-def get_city_name_variations(city: str) -> list:
-    """Get variations of city name for matching"""
-    variations = [city.lower()]
+def get_historical_temp(city: str, month: int = None) -> tuple:
+    """Get historical temperature range for a city"""
+    if month is None:
+        month = datetime.now().month
     
-    # Common variations
-    if "new york" in city.lower():
-        variations.extend(["nyc", "ny", "new york city"])
-    elif "buenos aires" in city.lower():
-        variations.extend(["buenos aires", "ba"])
-    elif "los angeles" in city.lower():
-        variations.extend(["la", "los angeles"])
-    elif "san francisco" in city.lower():
-        variations.extend(["sf", "san francisco"])
-    elif "sao paulo" in city.lower():
-        variations.extend(["sp", "sao paulo"])
+    month_key = "feb" if month in [2, 3] else "mar"
+    city = city.lower()
     
-    return variations
+    if city in TEMP_HISTORICAL:
+        return TEMP_HISTORICAL[city].get(month_key, (5, 15))
+    
+    return (5, 15)  # Default
 
 
-# Probabilidad histórica de precipitación por ciudad/mes (para markets de lluvia)
+class OpenMeteoClient:
+    """
+    Open-Meteo API - Free weather forecasting API (no key required)
+    Provides 7-day forecast for any location globally
+    """
+    
+    def __init__(self):
+        self.base_url = "https://api.open-meteo.com/v1/forecast"
+        self.client = httpx.Client(timeout=30.0)
+    
+    def get_forecast(self, lat: float, lon: float, days: int = 7) -> dict:
+        """
+        Get forecast from Open-Meteo
+        
+        Returns:
+            Dict with daily forecasts including max/min temperature
+        """
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+            "timezone": "auto",
+            "forecast_days": days
+        }
+        
+        resp = self.client.get(self.base_url, params=params)
+        
+        if resp.status_code != 200:
+            return {"error": f"API error: {resp.status_code}"}
+        
+        data = resp.json()
+        daily = data.get("daily", {})
+        
+        forecasts = []
+        dates = daily.get("time", [])
+        max_temps = daily.get("temperature_2m_max", [])
+        min_temps = daily.get("temperature_2m_min", [])
+        
+        for i, date in enumerate(dates):
+            forecasts.append({
+                "date": date,
+                "max_temp": max_temps[i] if i < len(max_temps) else None,
+                "min_temp": min_temps[i] if i < len(min_temps) else None,
+            })
+        
+        return {
+            "source": "Open-Meteo",
+            "lat": lat,
+            "lon": lon,
+            "forecasts": forecasts,
+            "timezone": data.get("timezone")
+        }
+    
+    def get_temperature_probability(self, lat: float, lon: float, threshold_f: float,
+                                  operator: str, target_date: str = None) -> dict:
+        """
+        Calculate probability of temperature exceeding threshold
+        
+        Uses forecast + historical variance for probability estimation
+        """
+        forecast = self.get_forecast(lat, lon, days=7)
+        
+        if "error" in forecast:
+            return {"probability": None, "error": forecast["error"]}
+        
+        # Convert F to C
+        threshold_c = (threshold_f - 32) * 5/9
+        
+        forecasts = forecast.get("forecasts", [])
+        
+        if not forecasts:
+            return {"probability": None, "error": "No forecast data"}
+        
+        # Find target date or use first available
+        target_forecast = None
+        if target_date:
+            for f in forecasts:
+                if target_date in f.get("date", ""):
+                    target_forecast = f
+                    break
+        
+        if not target_forecast:
+            # Use the first forecast (tomorrow)
+            target_forecast = forecasts[0]
+        
+        max_temp = target_forecast.get("max_temp")
+        min_temp = target_forecast.get("min_temp")
+        
+        if max_temp is None or min_temp is None:
+            return {"probability": None, "error": "No temperature data"}
+        
+        # Calculate probability based on forecast range and historical variance
+        # Using a simple model: if threshold is below min, 100%; above max, 0%
+        # Otherwise, interpolate with some variance
+        import random
+        variance = 3  # degrees Celsius of variance (historical weather variability)
+        
+        if operator == ">":
+            if threshold_c < min_temp - variance:
+                probability = 1.0
+            elif threshold_c > max_temp + variance:
+                probability = 0.0
+            else:
+                # Linear interpolation through the range + variance
+                range_total = (max_temp + variance) - (min_temp - variance)
+                position = (threshold_c - (min_temp - variance)) / range_total
+                probability = max(0, min(1, 1 - position))
+        else:  # operator == "<"
+            if threshold_c > max_temp + variance:
+                probability = 1.0
+            elif threshold_c < min_temp - variance:
+                probability = 0.0
+            else:
+                range_total = (max_temp + variance) - (min_temp - variance)
+                position = (threshold_c - (min_temp - variance)) / range_total
+                probability = max(0, min(1, position))
+        
+        return {
+            "probability": probability,
+            "threshold_c": threshold_c,
+            "threshold_f": threshold_f,
+            "operator": operator,
+            "forecast_max_c": max_temp,
+            "forecast_min_c": min_temp,
+            "method": "openmeteo_forecast",
+            "source": "Open-Meteo"
+        }
+
+
+# Historical precipitation probability by city/month
 PRECIP_HISTORICAL = {
-    "london": {"jan": 0.5, "feb": 0.45, "mar": 0.4, "apr": 0.35, "may": 0.35, "jun": 0.35,
-               "jul": 0.3, "aug": 0.35, "sep": 0.4, "oct": 0.5, "nov": 0.55, "dec": 0.55},
-    "paris": {"jan": 0.45, "feb": 0.4, "mar": 0.35, "apr": 0.3, "may": 0.35, "jun": 0.3,
-              "jul": 0.25, "aug": 0.25, "sep": 0.3, "oct": 0.4, "nov": 0.45, "dec": 0.5},
-    "new york": {"jan": 0.3, "feb": 0.3, "mar": 0.35, "apr": 0.35, "may": 0.4, "jun": 0.4,
-                 "jul": 0.35, "aug": 0.35, "sep": 0.35, "oct": 0.35, "nov": 0.35, "dec": 0.35},
+    "london": {"feb": 0.45, "mar": 0.40},
+    "paris": {"feb": 0.40, "mar": 0.35},
+    "new york": {"feb": 0.30, "mar": 0.35},
+    "madrid": {"feb": 0.30, "mar": 0.30},
+    "rome": {"feb": 0.35, "mar": 0.30},
+    "berlin": {"feb": 0.35, "mar": 0.30},
+    "amsterdam": {"feb": 0.45, "mar": 0.40},
+    "vienna": {"feb": 0.35, "mar": 0.30},
+    "budapest": {"feb": 0.30, "mar": 0.25},
+    "munich": {"feb": 0.40, "mar": 0.35},
+    "salzburg": {"feb": 0.40, "mar": 0.35},
+    "ljubljana": {"feb": 0.35, "mar": 0.35},
+    "krakow": {"feb": 0.35, "mar": 0.30},
+    "strasbourg": {"feb": 0.40, "mar": 0.35},
+    "prague": {"feb": 0.35, "mar": 0.30},
+    "lisbon": {"feb": 0.30, "mar": 0.30},
+    "athens": {"feb": 0.30, "mar": 0.25},
+    "warsaw": {"feb": 0.35, "mar": 0.30},
+    "seattle": {"feb": 0.50, "mar": 0.45},
+    "miami": {"feb": 0.25, "mar": 0.25},
+    "chicago": {"feb": 0.30, "mar": 0.35},
+    "toronto": {"feb": 0.35, "mar": 0.35},
+    "buenos aires": {"feb": 0.35, "mar": 0.35},
+    "sydney": {"feb": 0.30, "mar": 0.35},
+    "tokyo": {"feb": 0.30, "mar": 0.35},
+    "seoul": {"feb": 0.25, "mar": 0.30},
 }
 
 
@@ -288,19 +356,14 @@ def get_historical_precip_probability(city: str, month: int = None) -> float:
     if month is None:
         month = datetime.now().month
     
-    city_lower = city.lower()
     month_names = ["jan", "feb", "mar", "apr", "may", "jun", 
                    "jul", "aug", "sep", "oct", "nov", "dec"]
     month_key = month_names[month - 1]
     
-    # Try exact match first
+    city_lower = city.lower()
+    
     if city_lower in PRECIP_HISTORICAL:
-        return PRECIP_HISTORICAL[city_lower].get(month_key, 0.3)
+        return PRECIP_HISTORICAL[city_lower].get(month_key, 0.35)
     
-    # Try partial match
-    for city_key, data in PRECIP_HISTORICAL.items():
-        if city_key in city_lower or city_lower in city_key:
-            return data.get(month_key, 0.3)
-    
-    # Default
-    return 0.3
+    # Default probability
+    return 0.35
