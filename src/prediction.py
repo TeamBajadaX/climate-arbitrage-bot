@@ -26,6 +26,8 @@ class PredictionEngine:
         self.openmeteo = OpenMeteoClient()  # Usar Open-Meteo para forecast real
         self.historical = HistoricalWeatherClient()  # Fallback
         self.cache = {}  # Cache forecasts
+        self.cache_ttl = 3600  # 1 hour cache TTL
+        self.cache_timestamps = {}  # Track when cached
         self.use_cache = use_cache
     
     def parse_market_question(self, question: str) -> dict:
@@ -138,13 +140,16 @@ class PredictionEngine:
         
         lat, lon = coords
         
-        # Generate cache key
-        cache_key = f"{city}_{variable}_{threshold}_{operator}_{date}"
+        # Generate cache key (simpler - just by city)
+        cache_key = city.lower()
         
-        # Check cache
+        # Check cache with TTL
         if self.use_cache and cache_key in self.cache:
-            logger.debug(f"Using cached prediction for {cache_key}")
-            return self.cache[cache_key]
+            cached_time = self.cache_timestamps.get(cache_key, 0)
+            import time
+            if time.time() - cached_time < self.cache_ttl:
+                logger.debug(f"Using cached prediction for {cache_key}")
+                return self.cache[cache_key]
         
         result = {"source": "Open-Meteo", "city": city}
         
@@ -201,6 +206,8 @@ class PredictionEngine:
         # Cache result
         if self.use_cache:
             self.cache[cache_key] = result
+            import time
+            self.cache_timestamps[cache_key] = time.time()
         
         return result
     
