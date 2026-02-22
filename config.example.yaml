@@ -31,8 +31,33 @@ spread_threshold: 0.95
 # Prediction edge (diferencia mínima entre NOAA vs mercado)
 prediction_threshold: 0.08
 
-# Confianza mínima para operar
+# Confianza mínima para abrir posición
 min_confidence: 0.55
+
+# Edge mínimo para abrir posición
+min_edge: 0.05
+
+# =======================
+# Close Rules Configuration
+# =======================
+# Reglas de cierre para testing (todas activas)
+
+# STOP_LOSS: Perder más de X% → cerrar
+stop_loss_pct: 0.10  # 10%
+
+# PROFIT_TAKE: Ganar más de X% → asegurar ganancias
+profit_take_pct: 0.30  # 30%
+
+# TRAILING_STOP: Caer X% desde máximo → proteger ganancias
+trailing_stop_pct: 0.15  # 15%
+
+# TIME_BASED: Cerrar X horas antes de la resolución
+hours_before_close: 1  # 1 hora
+
+# EDGE_LOSS: Si el edge baja X% → cerrar
+edge_loss_threshold: 0.02  # 2%
+
+# HOLD: Mantener hasta resolución (siempre activo)
 
 # =======================
 # Markets to Monitor
@@ -46,4 +71,4 @@ cities: []
 logging:
   level: "INFO"
   save_trades: true
-  alert_on_edge: true  # Alertas cuando se detecta opportunity
+  alert_on_edge: true
